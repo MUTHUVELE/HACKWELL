@@ -56,10 +56,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const workspaceItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    ...(isPharmacistOrAdmin ? [
-      { id: 'billing', label: 'Billing', icon: Receipt },
-      { id: 'reminders', label: 'Refill Reminders', icon: CalendarClock }
-    ] : []),
+    { id: 'billing', label: 'Billing', icon: Receipt },
+    { id: 'reminders', label: 'Refill Reminders', icon: CalendarClock },
     { id: 'approvals', label: 'Approvals', icon: ShieldCheck, badge: pendingApprovalsCount, badgeColor: 'bg-[#16A34A]/25 text-emerald-300' },
     { id: 'alerts', label: 'Live Alerts', icon: Bell, badge: criticalAlertsCount, badgeColor: 'bg-[#DC2626]/30 text-rose-200' },
     { id: 'inventory', label: 'Inventory', icon: Boxes },
