@@ -38,9 +38,11 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     try:
         from app.database import SessionLocal
+        from app.services.auth_service import ensure_seed_users
         from app.services.patient_reminder_service import seed_default_patients
         db = SessionLocal()
         try:
+            ensure_seed_users(db)
             seed_default_patients(db)
         finally:
             db.close()

@@ -68,6 +68,18 @@ export const RemindersPage: React.FC = () => {
   const [gatewayUrl, setGatewayUrl] = useState('');
   const [savingSmsConfig, setSavingSmsConfig] = useState(false);
   const [smsModalSuccess, setSmsModalSuccess] = useState<string | null>(null);
+  const [smsModalError, setSmsModalError] = useState<string | null>(null);
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [connectionTestResult, setConnectionTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const normalizeProviderId = (providerStr?: string): string => {
+    if (!providerStr) return 'medisentinel_direct';
+    const lower = providerStr.toLowerCase();
+    if (lower.includes('twilio')) return 'twilio';
+    if (lower.includes('fast2sms') || lower.includes('fast')) return 'fast2sms';
+    if (lower.includes('custom') || lower.includes('webhook')) return 'custom_gateway';
+    return 'medisentinel_direct';
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -81,7 +93,9 @@ export const RemindersPage: React.FC = () => {
       setPatients(ptsData);
       if (cfgData) {
         setSmsConfig(cfgData);
-        setSelectedProvider(cfgData.active_provider);
+        setSelectedProvider(cfgData.active_provider_id || normalizeProviderId(cfgData.active_provider));
+        if (cfgData.twilio_phone) setTwilioPhone(cfgData.twilio_phone);
+        if (cfgData.gateway_url) setGatewayUrl(cfgData.gateway_url);
       }
     } catch (err: any) {
       console.error('Failed to load refill reminders data:', err);
@@ -94,22 +108,58 @@ export const RemindersPage: React.FC = () => {
     e.preventDefault();
     setSavingSmsConfig(true);
     setSmsModalSuccess(null);
+    setSmsModalError(null);
+    setConnectionTestResult(null);
     try {
       const updated = await api.updateSMSConfig({
         provider: selectedProvider,
-        twilio_sid: twilioSid || undefined,
-        twilio_token: twilioToken || undefined,
-        twilio_phone: twilioPhone || undefined,
-        fast2sms_key: fast2smsKey || undefined,
-        gateway_url: gatewayUrl || undefined,
+        twilio_sid: twilioSid.trim() || undefined,
+        twilio_token: twilioToken.trim() || undefined,
+        twilio_auth: twilioToken.trim() || undefined,
+        twilio_phone: twilioPhone.trim() || undefined,
+        twilio_from: twilioPhone.trim() || undefined,
+        fast2sms_key: fast2smsKey.trim() || undefined,
+        gateway_url: gatewayUrl.trim() || undefined,
       });
       setSmsConfig(updated);
-      setSmsModalSuccess(`SMS Gateway active provider set to: ${updated.active_provider.toUpperCase()}`);
-      setTimeout(() => setSmsModalSuccess(null), 3000);
+      setSelectedProvider(updated.active_provider_id || normalizeProviderId(updated.active_provider));
+      setSmsModalSuccess(`Currently Active Provider: ${updated.active_provider.toUpperCase()}`);
+      setTimeout(() => setSmsModalSuccess(null), 4000);
     } catch (err: any) {
       console.error('Failed to update SMS configuration:', err);
+      const detail = err.response?.data?.detail || err.message || 'Provider configuration incomplete.';
+      setSmsModalError(detail);
     } finally {
       setSavingSmsConfig(false);
+    }
+  };
+
+  const handleTestConnection = async () => {
+    setTestingConnection(true);
+    setConnectionTestResult(null);
+    setSmsModalError(null);
+    try {
+      const result = await api.testSMSConnection({
+        provider: selectedProvider,
+        twilio_sid: twilioSid.trim() || undefined,
+        twilio_token: twilioToken.trim() || undefined,
+        twilio_auth: twilioToken.trim() || undefined,
+        twilio_phone: twilioPhone.trim() || undefined,
+        twilio_from: twilioPhone.trim() || undefined,
+        fast2sms_key: fast2smsKey.trim() || undefined,
+        gateway_url: gatewayUrl.trim() || undefined,
+      });
+      setConnectionTestResult({
+        success: result.success,
+        message: result.message
+      });
+    } catch (err: any) {
+      setConnectionTestResult({
+        success: false,
+        message: err.response?.data?.detail || err.message || 'Connection test failed.'
+      });
+    } finally {
+      setTestingConnection(false);
     }
   };
 
@@ -870,8 +920,30 @@ export const RemindersPage: React.FC = () => {
 
             {smsModalSuccess && (
               <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-2xl flex items-center space-x-2">
-                <Check className="w-4 h-4 text-emerald-600" />
+                <Check className="w-4 h-4 text-emerald-600 shrink-0" />
                 <span>{smsModalSuccess}</span>
+              </div>
+            )}
+
+            {smsModalError && (
+              <div className="p-3 bg-red-50 border border-red-200 text-red-800 text-xs rounded-2xl flex items-center space-x-2">
+                <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                <span>{smsModalError}</span>
+              </div>
+            )}
+
+            {connectionTestResult && (
+              <div className={`p-3 border text-xs rounded-2xl flex items-center space-x-2 ${
+                connectionTestResult.success
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                  : 'bg-amber-50 border-amber-200 text-amber-800'
+              }`}>
+                {connectionTestResult.success ? (
+                  <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                )}
+                <span>{connectionTestResult.message}</span>
               </div>
             )}
 
@@ -883,7 +955,7 @@ export const RemindersPage: React.FC = () => {
                 </span>
               </div>
               <p className="text-[11px] text-gray-500 leading-relaxed">
-                When reminders reach their scheduled reminder date, this provider dispatches real SMS to the patient phone number, and records the <strong>DELIVERED</strong> status in the MediSentinel Notification Log.
+                When billing transactions complete or reminders reach their scheduled reminder date, this active provider dispatches real SMS to the patient phone number, and records the <strong>DELIVERED</strong> status in the MediSentinel Notification Log.
               </p>
             </div>
 
@@ -894,14 +966,18 @@ export const RemindersPage: React.FC = () => {
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   {[
-                    { id: 'medisentinel_direct', label: 'MediSentinel Direct', desc: 'Carrier-grade verified dispatch' },
-                    { id: 'fast2sms', label: 'Fast2SMS (India)', desc: 'DLT-free Quick SMS Route' },
-                    { id: 'twilio', label: 'Twilio REST API', desc: 'Global carrier network' },
-                    { id: 'custom_gateway', label: 'Custom HTTP Gateway', desc: 'Enterprise SMS webhook' }
+                    { id: 'medisentinel_direct', label: 'MediSentinel Direct', desc: 'Carrier-grade verified dispatch', isConfigured: true },
+                    { id: 'fast2sms', label: 'Fast2SMS (India)', desc: 'DLT-free Quick SMS Route', isConfigured: smsConfig?.has_fast2sms },
+                    { id: 'twilio', label: 'Twilio REST API', desc: 'Global carrier network', isConfigured: smsConfig?.has_twilio },
+                    { id: 'custom_gateway', label: 'Custom HTTP Gateway', desc: 'Enterprise SMS webhook', isConfigured: smsConfig?.has_custom_gateway }
                   ].map((p) => (
                     <div
                       key={p.id}
-                      onClick={() => setSelectedProvider(p.id)}
+                      onClick={() => {
+                        setSelectedProvider(p.id);
+                        setSmsModalError(null);
+                        setConnectionTestResult(null);
+                      }}
                       className={`p-3 rounded-2xl border cursor-pointer transition-all ${
                         selectedProvider === p.id
                           ? 'border-[#006B4F] bg-[#006B4F]/5 shadow-xs'
@@ -910,9 +986,11 @@ export const RemindersPage: React.FC = () => {
                     >
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold text-[#12332C]">{p.label}</span>
-                        {selectedProvider === p.id && (
+                        {selectedProvider === p.id ? (
                           <CheckCircle2 className="w-3.5 h-3.5 text-[#006B4F]" />
-                        )}
+                        ) : p.isConfigured ? (
+                          <span className="text-[9px] font-semibold bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-md">Saved</span>
+                        ) : null}
                       </div>
                       <span className="text-[10px] text-gray-500 block mt-0.5">{p.desc}</span>
                     </div>
@@ -922,12 +1000,19 @@ export const RemindersPage: React.FC = () => {
 
               {selectedProvider === 'fast2sms' && (
                 <div className="space-y-2 pt-2 border-t border-gray-100">
-                  <label className="text-xs font-semibold text-gray-700 block">
-                    Fast2SMS Authorization API Key
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-gray-700 block">
+                      Fast2SMS Authorization API Key
+                    </label>
+                    {smsConfig?.has_fast2sms && (
+                      <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                        ✓ Key Stored (Leave blank to keep)
+                      </span>
+                    )}
+                  </div>
                   <input
                     type="password"
-                    placeholder="Enter Fast2SMS API Key"
+                    placeholder={smsConfig?.has_fast2sms ? "•••••••••••••••• (API Key Configured)" : "Enter Fast2SMS API Key"}
                     value={fast2smsKey}
                     onChange={(e) => setFast2smsKey(e.target.value)}
                     className="w-full bg-[#F3FAF7] border border-[#D9E8E3] rounded-2xl px-3.5 py-2 text-xs text-[#12332C] focus:outline-none focus:ring-2 focus:ring-[#006B4F] font-mono"
@@ -940,13 +1025,20 @@ export const RemindersPage: React.FC = () => {
 
               {selectedProvider === 'twilio' && (
                 <div className="space-y-3 pt-2 border-t border-gray-100">
+                  {smsConfig?.has_twilio && (
+                    <div className="flex items-center justify-end">
+                      <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                        ✓ Credentials Stored (Leave blank to keep)
+                      </span>
+                    </div>
+                  )}
                   <div>
                     <label className="text-xs font-semibold text-gray-700 block mb-1">
                       Twilio Account SID
                     </label>
                     <input
                       type="text"
-                      placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                      placeholder={smsConfig?.has_twilio ? "•••••••••••••••• (Account SID Configured)" : "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}
                       value={twilioSid}
                       onChange={(e) => setTwilioSid(e.target.value)}
                       className="w-full bg-[#F3FAF7] border border-[#D9E8E3] rounded-2xl px-3.5 py-2 text-xs text-[#12332C] focus:outline-none focus:ring-2 focus:ring-[#006B4F] font-mono"
@@ -958,7 +1050,7 @@ export const RemindersPage: React.FC = () => {
                     </label>
                     <input
                       type="password"
-                      placeholder="Auth Token"
+                      placeholder={smsConfig?.has_twilio ? "•••••••••••••••• (Auth Token Configured)" : "Auth Token"}
                       value={twilioToken}
                       onChange={(e) => setTwilioToken(e.target.value)}
                       className="w-full bg-[#F3FAF7] border border-[#D9E8E3] rounded-2xl px-3.5 py-2 text-xs text-[#12332C] focus:outline-none focus:ring-2 focus:ring-[#006B4F] font-mono"
@@ -970,7 +1062,7 @@ export const RemindersPage: React.FC = () => {
                     </label>
                     <input
                       type="text"
-                      placeholder="+1234567890"
+                      placeholder={smsConfig?.twilio_phone || "+1234567890"}
                       value={twilioPhone}
                       onChange={(e) => setTwilioPhone(e.target.value)}
                       className="w-full bg-[#F3FAF7] border border-[#D9E8E3] rounded-2xl px-3.5 py-2 text-xs text-[#12332C] focus:outline-none focus:ring-2 focus:ring-[#006B4F] font-mono"
@@ -981,12 +1073,19 @@ export const RemindersPage: React.FC = () => {
 
               {selectedProvider === 'custom_gateway' && (
                 <div className="space-y-2 pt-2 border-t border-gray-100">
-                  <label className="text-xs font-semibold text-gray-700 block">
-                    Custom SMS Webhook URL
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-gray-700 block">
+                      Custom SMS Webhook URL
+                    </label>
+                    {smsConfig?.has_custom_gateway && (
+                      <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                        ✓ Webhook URL Stored
+                      </span>
+                    )}
+                  </div>
                   <input
                     type="url"
-                    placeholder="https://sms-provider.internal/api/send"
+                    placeholder={smsConfig?.gateway_url || "https://sms-provider.internal/api/send"}
                     value={gatewayUrl}
                     onChange={(e) => setGatewayUrl(e.target.value)}
                     className="w-full bg-[#F3FAF7] border border-[#D9E8E3] rounded-2xl px-3.5 py-2 text-xs text-[#12332C] focus:outline-none focus:ring-2 focus:ring-[#006B4F] font-mono"
@@ -995,18 +1094,26 @@ export const RemindersPage: React.FC = () => {
               )}
             </div>
 
-            <div className="pt-3 flex items-center space-x-3">
+            <div className="pt-3 flex items-center space-x-2">
               <button
                 type="button"
                 onClick={() => setShowSmsModal(false)}
-                className="flex-1 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded-2xl transition-colors"
+                className="py-2 px-3.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded-2xl transition-colors"
               >
                 Close
               </button>
               <button
+                type="button"
+                onClick={handleTestConnection}
+                disabled={testingConnection}
+                className="py-2 px-3.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-semibold rounded-2xl transition-colors disabled:opacity-50"
+              >
+                {testingConnection ? 'Testing...' : 'Test Connection'}
+              </button>
+              <button
                 type="submit"
                 disabled={savingSmsConfig}
-                className="flex-1 py-2 bg-[#006B4F] hover:bg-[#00523C] text-white text-xs font-bold rounded-2xl transition-colors disabled:opacity-50"
+                className="flex-1 py-2 bg-[#006B4F] hover:bg-[#00523C] text-white text-xs font-bold rounded-2xl transition-colors disabled:opacity-50 shadow-xs"
               >
                 {savingSmsConfig ? 'Saving...' : 'Apply Provider'}
               </button>

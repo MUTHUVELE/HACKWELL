@@ -510,10 +510,13 @@ export interface ReminderProcessResult {
 
 export interface SMSGatewayConfig {
   active_provider: string;
+  active_provider_id?: string;
   has_twilio: boolean;
   has_fast2sms: boolean;
   has_custom_gateway: boolean;
   twilio_phone?: string;
+  twilio_from?: string;
+  gateway_url?: string;
   default_sender?: string;
   supported_providers: string[];
 }
@@ -521,11 +524,19 @@ export interface SMSGatewayConfig {
 export interface SMSGatewayUpdate {
   provider?: string;
   twilio_sid?: string;
+  twilio_auth?: string;
   twilio_token?: string;
+  twilio_from?: string;
   twilio_phone?: string;
   fast2sms_key?: string;
   gateway_url?: string;
   sender_id?: string;
+}
+
+export interface SMSConnectionTestResponse {
+  success: boolean;
+  message: string;
+  provider: string;
 }
 
 

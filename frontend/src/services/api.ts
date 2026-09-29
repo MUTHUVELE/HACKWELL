@@ -21,7 +21,8 @@ import {
   NotificationLog,
   ReminderProcessResult,
   SMSGatewayConfig,
-  SMSGatewayUpdate
+  SMSGatewayUpdate,
+  SMSConnectionTestResponse
 } from '../types';
 
 
@@ -273,6 +274,10 @@ export const api = {
     const res = await client.post<BillCancelResponse>(`/api/billing/bills/${billId}/cancel`);
     return res.data;
   },
+  sendBillSMS: async (billId: number): Promise<any> => {
+    const res = await client.post(`/api/billing/bills/${billId}/send-sms`);
+    return res.data;
+  },
 
   // Patient Refill Reminders
   getPatients: async (): Promise<Patient[]> => {
@@ -311,6 +316,10 @@ export const api = {
   },
   updateSMSConfig: async (payload: SMSGatewayUpdate): Promise<SMSGatewayConfig> => {
     const res = await client.post<SMSGatewayConfig>('/api/reminders/sms-config', payload);
+    return res.data;
+  },
+  testSMSConnection: async (payload: SMSGatewayUpdate): Promise<SMSConnectionTestResponse> => {
+    const res = await client.post<SMSConnectionTestResponse>('/api/reminders/sms-config/test', payload);
     return res.data;
   },
 

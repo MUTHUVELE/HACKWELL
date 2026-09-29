@@ -152,7 +152,7 @@ async def sms_delivery_webhook(
 def simulate_sms_delivery(
     log_id: int,
     db: Session = Depends(get_db),
-    current_user: Dict[str, Any] = Depends(require_role([UserRole.PHARMACIST.value]))
+    current_user: Dict[str, Any] = Depends(require_role([UserRole.PHARMACIST.value, UserRole.ADMIN.value]))
 ):
     """
     Simulates carrier delivery receipt callback for a queued/sent message.
@@ -201,7 +201,7 @@ def simulate_sms_delivery(
 def get_bill_sms_status(
     bill_id: int,
     db: Session = Depends(get_db),
-    current_user: Dict[str, Any] = Depends(require_role([UserRole.PHARMACIST.value]))
+    current_user: Dict[str, Any] = Depends(require_role([UserRole.PHARMACIST.value, UserRole.ADMIN.value]))
 ):
     """
     Get the SMS notification logs and status for a specific pharmacy bill.
@@ -241,7 +241,7 @@ def get_sms_logs(
     status: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
-    current_user: Dict[str, Any] = Depends(require_role([UserRole.PHARMACIST.value]))
+    current_user: Dict[str, Any] = Depends(require_role([UserRole.PHARMACIST.value, UserRole.ADMIN.value]))
 ):
     """
     List recent SMS notification logs across pharmacy dispensing operations.

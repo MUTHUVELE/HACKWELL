@@ -423,7 +423,7 @@ class BillCreateRequest(BaseModel):
     patient_name: Optional[str] = None
     patient_phone: Optional[str] = None
     notes: Optional[str] = None
-    notification_consent: bool = True
+    notification_consent: bool = False
     items: List[BillItemInput]
 
 class BillItemDetailResponse(BaseModel):
@@ -549,6 +549,17 @@ class MedicationReminderResponse(BaseModel):
     notification_logs: List[NotificationLogResponse] = []
     model_config = ConfigDict(from_attributes=True)
 
+class ReminderProcessRequest(BaseModel):
+    simulate_date: Optional[str] = None
+    target_date: Optional[str] = None
+    date: Optional[str] = None
+    force_all: Optional[bool] = False
+    force: Optional[bool] = False
+
+class ReminderSendRequest(BaseModel):
+    channel: Optional[str] = "SMS"
+    force: Optional[bool] = False
+
 class ReminderProcessResult(BaseModel):
     target_date: str
     total_checked: int
@@ -560,6 +571,7 @@ class ReminderProcessResult(BaseModel):
 
 class SMSGatewayConfig(BaseModel):
     active_provider: str
+    active_provider_id: Optional[str] = None
     has_twilio: bool
     twilio_from: Optional[str] = None
     has_fast2sms: bool
@@ -571,10 +583,17 @@ class SMSGatewayConfig(BaseModel):
 class SMSGatewayUpdate(BaseModel):
     twilio_sid: Optional[str] = None
     twilio_auth: Optional[str] = None
+    twilio_token: Optional[str] = None
     twilio_from: Optional[str] = None
+    twilio_phone: Optional[str] = None
     fast2sms_key: Optional[str] = None
     gateway_url: Optional[str] = None
     provider: Optional[str] = None
+
+class SMSConnectionTestResponse(BaseModel):
+    success: bool
+    message: str
+    provider: str
 
 class SMSDeliveryWebhookPayload(BaseModel):
     provider_message_id: Optional[str] = None

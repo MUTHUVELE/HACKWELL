@@ -43,14 +43,14 @@ def generate_reminder_message(
     finish_date: date
 ) -> str:
     """
-    Generate professional, non-clinical reminder text.
-    Free from diagnostic assertions, treatment advice, or dosage alterations.
+    Generate professional, non-clinical reminder text strictly <= 160 chars
+    to consume exactly 1 SMS credit (₹5) on Fast2SMS.
     """
-    formatted_date = finish_date.strftime("%d %B %Y")
+    formatted_date = finish_date.strftime("%d-%b-%Y")
+    clean_patient = patient_name.strip() if patient_name else "Patient"
     return (
-        f"Hi {patient_name}, your recently purchased {medicine_name} may be nearing "
-        f"the end of its expected supply around {formatted_date}. "
-        f"Please contact your pharmacy or healthcare provider if you need a refill."
+        f"Dear {clean_patient}, your {medicine_name} refill from MediSentinel Pharmacy is due "
+        f"around {formatted_date}. Please visit our pharmacy for a timely refill."
     )
 
 def schedule_reminders_for_bill(bill_id: int, db: Session) -> List[MedicationReminder]:
@@ -124,15 +124,16 @@ def schedule_reminders_for_bill(bill_id: int, db: Session) -> List[MedicationRem
 
 def process_due_reminders(
     target_date: Optional[date] = None,
+    force_all: bool = False,
     db: Session = None
 ) -> ReminderProcessResult:
     """
     Scheduled job / on-demand process to evaluate active reminders.
     Criteria:
       - status == PENDING
-      - current_date >= reminder_date AND current_date < estimated_finish_date
+      - current_date >= reminder_date (unless force_all=True)
       - notification_consent == True
-      - idempotent: records status=SENT to prevent duplicate dispatches
+      - idempotent: records status=DELIVERED/FAILED to prevent duplicate dispatches
     """
     check_date = target_date or datetime.utcnow().date()
     
@@ -149,8 +150,8 @@ def process_due_reminders(
     details: List[Dict[str, Any]] = []
 
     for rem in pending_reminders:
-        # Check if reminder date is reached
-        if check_date < rem.reminder_date:
+        # Check if reminder date is reached unless force_all requested
+        if not force_all and check_date < rem.reminder_date:
             continue
 
         patient = rem.patient
@@ -193,31 +194,54 @@ def process_due_reminders(
             status_str = dispatch_result.get("status", "DELIVERED")
             provider_name = dispatch_result.get("provider", "SMS Provider")
             ref_id = dispatch_result.get("reference", "")
+            fail_reason = dispatch_result.get("failure_reason")
             log_msg = f"[{provider_name} | Ref: {ref_id}] {rem.notification_message}" if ref_id else (rem.notification_message or "")
 
-            log = NotificationLog(
-                reminder_id=rem.id,
-                channel="SMS",
-                recipient=dispatch_result.get("recipient", patient.mobile_number),
-                message=log_msg,
-                status=status_str,
-                sent_at=datetime.utcnow(),
-                failure_reason=None
-            )
-            db.add(log)
-            rem.status = ReminderStatus.DELIVERED
-            sent_count += 1
-            details.append({
-                "reminder_id": rem.id,
-                "patient": patient.full_name,
-                "medicine": med.name if med else "Medicine",
-                "status": status_str,
-                "provider": provider_name,
-                "reference": ref_id,
-                "recipient": dispatch_result.get("recipient", patient.mobile_number),
-                "finish_date": str(rem.estimated_finish_date),
-                "reminder_date": str(rem.reminder_date)
-            })
+            if status_str in ("DELIVERED", "SENT", "QUEUED"):
+                log = NotificationLog(
+                    reminder_id=rem.id,
+                    channel="SMS",
+                    recipient=dispatch_result.get("recipient", patient.mobile_number),
+                    message=log_msg,
+                    status=status_str,
+                    sent_at=datetime.utcnow(),
+                    failure_reason=None
+                )
+                db.add(log)
+                rem.status = ReminderStatus.DELIVERED
+                sent_count += 1
+                details.append({
+                    "reminder_id": rem.id,
+                    "patient": patient.full_name,
+                    "medicine": med.name if med else "Medicine",
+                    "status": status_str,
+                    "provider": provider_name,
+                    "reference": ref_id,
+                    "recipient": dispatch_result.get("recipient", patient.mobile_number),
+                    "finish_date": str(rem.estimated_finish_date),
+                    "reminder_date": str(rem.reminder_date)
+                })
+            else:
+                log = NotificationLog(
+                    reminder_id=rem.id,
+                    channel="SMS",
+                    recipient=dispatch_result.get("recipient", patient.mobile_number),
+                    message=log_msg,
+                    status="FAILED",
+                    sent_at=datetime.utcnow(),
+                    failure_reason=fail_reason or f"SMS Gateway returned {status_str}"
+                )
+                db.add(log)
+                rem.status = ReminderStatus.FAILED
+                failed_count += 1
+                details.append({
+                    "reminder_id": rem.id,
+                    "patient": patient.full_name if patient else "Unknown",
+                    "medicine": med.name if med else "Medicine",
+                    "status": "FAILED",
+                    "provider": provider_name,
+                    "reason": fail_reason or f"SMS Gateway returned {status_str}"
+                })
         except Exception as e:
             rem.status = ReminderStatus.FAILED
             failed_count += 1
@@ -289,30 +313,56 @@ def send_single_reminder(
     status_str = dispatch_res.get("status", "DELIVERED")
     provider_name = dispatch_res.get("provider", "SMS Gateway")
     ref_id = dispatch_res.get("reference", "")
+    fail_reason = dispatch_res.get("failure_reason")
     log_msg = f"[{provider_name} | Ref: {ref_id}] {rem.notification_message}" if ref_id else (rem.notification_message or "")
 
-    log = NotificationLog(
-        reminder_id=rem.id,
-        channel=channel,
-        recipient=dispatch_res.get("recipient", to_phone),
-        message=log_msg,
-        status=status_str,
-        sent_at=datetime.utcnow(),
-        failure_reason=None
-    )
-    db.add(log)
-    rem.status = ReminderStatus.DELIVERED
-    db.commit()
+    if status_str in ("DELIVERED", "SENT", "QUEUED"):
+        log = NotificationLog(
+            reminder_id=rem.id,
+            channel=channel,
+            recipient=dispatch_res.get("recipient", to_phone),
+            message=log_msg,
+            status=status_str,
+            sent_at=datetime.utcnow(),
+            failure_reason=None
+        )
+        db.add(log)
+        rem.status = ReminderStatus.DELIVERED
+        db.commit()
 
-    return {
-        "status": status_str,
-        "message": f"Refill reminder delivered to {patient.full_name} via {provider_name} [Ref: {ref_id}].",
-        "reminder_id": rem.id,
-        "recipient": log.recipient,
-        "provider": provider_name,
-        "reference": ref_id,
-        "sent_at": log.sent_at.isoformat()
-    }
+        return {
+            "status": status_str,
+            "message": f"Refill reminder delivered to {patient.full_name} via {provider_name} [Ref: {ref_id}].",
+            "reminder_id": rem.id,
+            "recipient": log.recipient,
+            "provider": provider_name,
+            "reference": ref_id,
+            "sent_at": log.sent_at.isoformat()
+        }
+    else:
+        log = NotificationLog(
+            reminder_id=rem.id,
+            channel=channel,
+            recipient=dispatch_res.get("recipient", to_phone),
+            message=log_msg,
+            status="FAILED",
+            sent_at=datetime.utcnow(),
+            failure_reason=fail_reason or f"SMS Gateway returned {status_str}"
+        )
+        db.add(log)
+        rem.status = ReminderStatus.FAILED
+        db.commit()
+
+        return {
+            "status": "FAILED",
+            "message": f"Refill reminder dispatch failed via {provider_name}: {fail_reason or status_str}",
+            "reminder_id": rem.id,
+            "recipient": log.recipient,
+            "provider": provider_name,
+            "reference": ref_id,
+            "failure_reason": fail_reason,
+            "sent_at": log.sent_at.isoformat()
+        }
 
 def seed_default_patients(db: Session) -> int:
     """

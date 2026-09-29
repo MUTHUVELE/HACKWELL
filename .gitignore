@@ -31,9 +31,11 @@ wheels/
 *.sqlite3
 *.sqlite
 
-# Environment variables
+# Environment variables & secrets
 .env
 .env.local
+.sms_config.json
+*.sms_config.json
 
 # Node / Frontend
 node_modules/
@@ -51,6 +53,8 @@ dist-ssr/
 *.swp
 *.swo
 
-# OS
+# OS & Cache
 .DS_Store
 Thumbs.db
+.pytest_cache/
+scratch/

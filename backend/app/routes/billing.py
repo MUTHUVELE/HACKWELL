@@ -187,7 +187,9 @@ def create_bill(
 
         if pt:
             resolved_patient_id = pt.id
-            if not resolved_patient_name:
+            if resolved_patient_name:
+                pt.full_name = resolved_patient_name
+            else:
                 resolved_patient_name = pt.full_name
             if patient_phone:
                 pt.mobile_number = patient_phone
@@ -479,6 +481,26 @@ def get_bill_detail(
         )
 
     return _format_bill_response(bill, db)
+
+@router.post("/bills/{id}/send-sms")
+def manually_approve_and_send_bill_sms(
+    id: int,
+    db: Session = Depends(get_db),
+    current_user: Dict[str, Any] = Depends(require_role([UserRole.PHARMACIST.value, UserRole.ADMIN.value]))
+):
+    """
+    Manually approve and dispatch an SMS confirmation for a specific bill on-demand.
+    Guarantees SMS is only sent when pharmacist explicitly approves.
+    """
+    bill = db.query(Bill).filter(Bill.id == id).first()
+    if not bill:
+        raise HTTPException(status_code=404, detail="Bill not found.")
+    
+    from app.services.bill_sms_service import send_bill_completion_sms
+    res = send_bill_completion_sms(bill.id, db, notification_consent=True, force=True)
+    if not res:
+        raise HTTPException(status_code=400, detail="Failed to dispatch SMS for this bill. Check patient mobile number.")
+    return res
 
 @router.post("/bills/{id}/cancel", response_model=BillCancelResponse)
 def cancel_bill(

@@ -25,19 +25,21 @@ def generate_bill_completion_message(patient_name: str, bill_number: str, medici
     """
     clean_name = patient_name.strip() if patient_name else "Valued Patient"
 
+    # Strictly <= 160 characters to ensure Fast2SMS only debits 1 SMS credit (₹5)
     return (
-        f"Hello {clean_name}, thank you for choosing our pharmacy. "
-        f"Your bill #{bill_number} has been successfully generated. "
-        f"We wish you good health."
+        f"Hello {clean_name}, your MediSentinel Hospital bill #{bill_number} is successfully generated. "
+        f"We wish you good health and a speedy recovery!"
     )
 
 def send_bill_completion_sms(
     bill_id: int,
     db: Session,
-    notification_consent: bool = True
+    notification_consent: bool = True,
+    force: bool = False
 ) -> Optional[Dict[str, Any]]:
     """
     Autonomous post-billing patient SMS notification trigger.
+    Can also be manually triggered upon explicit approval with force=True.
     
     CRITICAL SAFETY RULES:
     1. Only sends if bill.status == BillStatus.SUCCESS.
@@ -73,8 +75,8 @@ def send_bill_completion_sms(
         if not phone_to_use and hasattr(bill, "patient_phone") and bill.patient_phone:
             phone_to_use = bill.patient_phone
 
-        # Check consent
-        if not notification_consent or (patient and patient.notification_consent is False):
+        # Check consent (unless explicitly approved / forced by pharmacist)
+        if not force and (not notification_consent or (patient and patient.notification_consent is False)):
             masked = mask_phone_number(phone_to_use) if phone_to_use else "N/A"
             logger.info(f"[BillSMS] Patient opted out of SMS notifications for Bill #{bill.bill_number}.")
             

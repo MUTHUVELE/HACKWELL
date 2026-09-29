@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, date
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Body, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -10,7 +10,9 @@ from app.models.entities import (
 )
 from app.schemas.schemas import (
     PatientCreate, PatientResponse, MedicationReminderResponse,
-    NotificationLogResponse, ReminderProcessResult, SMSGatewayConfig, SMSGatewayUpdate
+    NotificationLogResponse, ReminderProcessResult, ReminderProcessRequest,
+    ReminderSendRequest, SMSGatewayConfig, SMSGatewayUpdate,
+    SMSConnectionTestResponse
 )
 from app.services.auth_service import require_role
 from app.services.patient_reminder_service import (
@@ -177,38 +179,69 @@ def get_reminder_logs(
 @router.post("/process-due", response_model=ReminderProcessResult)
 @router.post("/process", response_model=ReminderProcessResult)
 def trigger_process_due_reminders(
+    payload: Optional[ReminderProcessRequest] = Body(None),
     simulate_date: Optional[str] = Query(None, description="Optional ISO date YYYY-MM-DD for simulation demo"),
+    force_all: Optional[bool] = Query(None, description="Force process all pending reminders immediately"),
     db: Session = Depends(get_db),
     current_user: Dict[str, Any] = Depends(require_role([UserRole.PHARMACIST.value, UserRole.ADMIN.value]))
 ):
     """
     Trigger the scheduler logic to check and process due refill reminders.
-    Supports simulate_date for jury interactive demonstrations.
+    Supports simulate_date and force_all via both JSON Body and Query parameters.
     """
-    target = None
+    target_date_str = None
+    force_flag = False
+
+    if payload:
+        target_date_str = payload.simulate_date or payload.target_date or payload.date
+        force_flag = bool(payload.force_all or payload.force)
+
     if simulate_date:
+        target_date_str = simulate_date
+    if force_all is not None:
+        force_flag = bool(force_all)
+
+    target = None
+    if target_date_str:
         try:
-            target = datetime.strptime(simulate_date, "%Y-%m-%d").date()
+            target = datetime.strptime(target_date_str.strip(), "%Y-%m-%d").date()
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="simulate_date must be in YYYY-MM-DD format."
+                detail="simulate_date / target_date must be in YYYY-MM-DD format."
             )
-    return process_due_reminders(target_date=target, db=db)
+
+    return process_due_reminders(target_date=target, force_all=force_flag, db=db)
 
 @router.post("/{reminder_id}/send")
 def trigger_single_reminder(
     reminder_id: int,
-    channel: str = Query("SMS"),
-    force: bool = Query(False),
+    payload: Optional[ReminderSendRequest] = Body(None),
+    channel: Optional[str] = Query(None),
+    force: Optional[bool] = Query(None),
     db: Session = Depends(get_db),
     current_user: Dict[str, Any] = Depends(require_role([UserRole.PHARMACIST.value, UserRole.ADMIN.value]))
 ):
     """
-    Manually dispatch / test a specific reminder notification from the UI.
+    Manually dispatch / test a specific reminder notification from the UI or API.
+    Supports channel and force via both JSON Body and Query parameters.
     """
+    channel_val = "SMS"
+    force_val = False
+
+    if payload:
+        if payload.channel:
+            channel_val = payload.channel
+        if payload.force is not None:
+            force_val = payload.force
+
+    if channel:
+        channel_val = channel
+    if force is not None:
+        force_val = bool(force)
+
     try:
-        result = send_single_reminder(reminder_id, channel=channel, force=force, db=db)
+        result = send_single_reminder(reminder_id, channel=channel_val, force=force_val, db=db)
         return result
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
@@ -230,13 +263,35 @@ def update_sms_config(
     current_user: Dict[str, Any] = Depends(require_role([UserRole.PHARMACIST.value, UserRole.ADMIN.value]))
 ):
     """
-    Update Real SMS Provider credentials at runtime (Twilio, Fast2SMS, Custom Gateway).
+    Update Real SMS Provider credentials at runtime and switch active provider.
+    Validates minimum required configuration before activating.
     """
-    return sms_gateway.update_config(
+    try:
+        return sms_gateway.update_config(
+            twilio_sid=payload.twilio_sid,
+            twilio_auth=payload.twilio_auth or payload.twilio_token,
+            twilio_from=payload.twilio_from or payload.twilio_phone,
+            fast2sms_key=payload.fast2sms_key,
+            gateway_url=payload.gateway_url,
+            provider=payload.provider
+        )
+    except ValueError as e:
+        logger.warning(f"SMS Provider configuration validation failed: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+@router.post("/sms-config/test", response_model=SMSConnectionTestResponse)
+def test_sms_provider_connection(
+    payload: SMSGatewayUpdate,
+    current_user: Dict[str, Any] = Depends(require_role([UserRole.PHARMACIST.value, UserRole.ADMIN.value]))
+):
+    """
+    Tests connection / credentials for specified SMS provider without sending real patient SMS.
+    """
+    return sms_gateway.test_connection(
+        provider=payload.provider,
         twilio_sid=payload.twilio_sid,
-        twilio_auth=payload.twilio_auth,
-        twilio_from=payload.twilio_from,
+        twilio_auth=payload.twilio_auth or payload.twilio_token,
+        twilio_from=payload.twilio_from or payload.twilio_phone,
         fast2sms_key=payload.fast2sms_key,
-        gateway_url=payload.gateway_url,
-        provider=payload.provider
+        gateway_url=payload.gateway_url
     )
