@@ -23,11 +23,10 @@ services:
         value: "false"
 
   # Frontend Static Site
-  - type: staticSite
+  - type: static
     name: medisentinel-frontend
     buildCommand: "cd frontend && npm install && npm run build"
-    staticPublishPath: "frontend/dist"
-    plan: free
+    publishPath: "frontend/dist"
     routes:
       - type: rewrite
         source: "/*"
